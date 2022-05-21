@@ -72,23 +72,32 @@ class ChessMan:
 	2. 移动到的位置上是否有棋子以及满不满足吃的要求
 	3. 是否原地移动
 	4. 当前棋子是否有自己的移动限制，如果有则进行检查
-	【注意】不检查终点和起点之间有没有棋子
+	【注意】不检查终点和起点之间有没有棋子，同时默认移动的是红方的棋子
 	'''
-	def can_move_to(self, x, y):
-		if (x<self.pos_range[0]) or (y<self.pos_range[1]): return False
-		if (x>self.pos_range[2]) or (y>self.pos_range[3]): return False
+	def can_move_to(self, x, y, show=False):
+		if (x<self.pos_range[0]) or (y<self.pos_range[1]): 
+			if show: print("移动到的位置(%d,%d)超出范围(%d,%d)"%(x,y, self.pos_range[0], self.pos_range[1]))
+			return False
+		if (x>self.pos_range[2]) or (y>self.pos_range[3]): 
+			if show: print("移动到的位置(%d,%d)超出范围(%d,%d)"%(x,y, self.pos_range[2], self.pos_range[3]))
+			return False
 
 		chess = self.board.board_map.get((x, y))
 		if (chess is not None) and (chess.player==self.player): 
+			if show: print("禁止移动，移动处为本方棋子")
 			return False
 
 		dx = x-self.x
 		dy = y-self.y
-		if (dx==0) and (dy==0): return False	# 不允许原地移动
+		if (dx==0) and (dy==0): 
+			if show: print("不允许原地移动")
+			return False	# 不允许原地移动
 
 		# 判断当前对象里是否存在移动要求，存在则进行判断，不存在意味可以移动
 		if not hasattr(self, 'allowed_moves'): return True
-		if (dx, dy) in self.allowed_moves: return True
+		if (dx, dy) in self.allowed_moves: 
+			if show: print("移动方式超出移动限制")
+			return True
 		return False
 
 # 将
@@ -98,7 +107,7 @@ class King(ChessMan):
 		# 将的移动限制和范围限制
 		self.allowed_moves=((-1,0),(1,0),(0,-1),(0,1))
 		self.pos_range=(3,0,5,2)
-	def can_move_to(self, x, y):
+	def can_move_to(self, x, y, show=False):
 		if super(King, self).can_move_to(x, y):
 			return True
 		# 如果双方将之间没有棋子间隔，可以直接移动到对方将的位置上
@@ -114,7 +123,7 @@ class King(ChessMan):
 class Rock(ChessMan):
 	def __init__(self, board, player, x, y):
 		super(Rock, self).__init__(board, player, 'Rock', x, y)
-	def can_move_to(self, x, y):
+	def can_move_to(self, x, y, show=False):
 		# 车只能沿直线移动
 		if (self.x!=x) and (self.y!=y): return False
 		if not super(Rock, self).can_move_to(x, y):
@@ -133,7 +142,7 @@ class Rock(ChessMan):
 class Cannon(ChessMan):
 	def __init__(self, board, player, x, y):
 		super(Cannon, self).__init__(board, player, 'Cannon', x, y)
-	def can_move_to(self, x, y):
+	def can_move_to(self, x, y, show=False):
 		# 炮只能沿直线移动
 		if (self.x!=x) and (self.y!=y): return False
 		if not super(Cannon, self).can_move_to(x, y): 
@@ -154,7 +163,7 @@ class Knight(ChessMan):
 		super(Knight, self).__init__(board, player, 'Knight', x, y)
 		# 马的移动限制
 		self.allowed_moves=((-2,-1),(-2,1),(-1,-2),(-1,2),(2,-1),(2,1),(1,-2),(1,2))
-	def can_move_to(self, x, y):
+	def can_move_to(self, x, y, show=False):
 		if not super(Knight, self).can_move_to(x, y):
 			return False
 		dx = x-self.x
@@ -182,7 +191,7 @@ class Bishop(ChessMan):
 		# 相只能走正方形对角线，并且只能在自己的一边移动
 		self.allowed_moves=((-2,-2),(-2,2),(2,-2),(2,2))
 		self.pos_range=(0,0,8,4)
-	def can_move_to(self, x, y):
+	def can_move_to(self, x, y, show=False):
 		if not super(Bishop, self).can_move_to(x, y):
 			return False
 		
@@ -199,7 +208,7 @@ class Pawn(ChessMan):
 		self.allowed_moves=((0,1),(-1,0),(1,0))
 		# 兵的移动范围
 		self.pos_range=(0,3,8,9)
-	def can_move_to(self, x, y):
+	def can_move_to(self, x, y, show=False):
 		if not super(Pawn, self).can_move_to(x, y):
 			return False
 		# 兵在过河前只能往前走
@@ -259,7 +268,7 @@ class ChessBoard:
 			for i in range(5):
 				cs.append(((i*2,3),Pawn))
 			for (x,y),t in cs:
-				self.board_map[(x,y)] = t(self, 'Red', x, y)
+				self.board_map[(x,y)] = t(self, 'Red', x, y)  # 棋盘，阵营，数组坐标
 		init_red()
 		self.rotate_board()
 		init_red()
@@ -355,7 +364,10 @@ class Controller:
 			self.chess_board.rotate_board()
 		return succ
 	
-	# 移动棋子到目标点，输入要移动的棋子和目标点坐标，返回运行结果和被吃掉的棋子(如果移动成功且目标点有敌方棋子时)
+	'''
+	移动棋子到目标点，输入要移动的棋子和目标点坐标，返回运行结果和被吃掉的棋子(如果移动成功且目标点有敌方棋子时)
+	注意，这个函数对于拖拽的棋子不会影响其在HTML上的显示，只会影响其在数组里的值和位置
+	'''
 	def _move_chess_to(self, chess, i2, j2):
 		if not self._can_move_chess_to(chess, i2, j2):
 			return False, None
@@ -382,9 +394,12 @@ class Controller:
 		self.chess_board.img_map[(i2,j2)] = img
 		return True, captured
 
-	# x0，y0为鼠标点击抬起(结束)时的像素坐标
-	# 如果棋子顺利移动到目标位置，那么这里的px,py就是目标位置数组坐标的像素坐标
-	# 如果棋子没有顺利移动到目标位置，那么这里的px,py就是棋子原始位置的像素坐标
+	'''
+	x0,y0为鼠标点击抬起(结束)时的像素坐标，为图像移动的起点
+	chess里的数组坐标i,j，对应的像素坐标px,py，为图像移动的终点
+	如果棋子顺利移动到目标位置，那么这里的px,py就是目标位置数组坐标的像素坐标
+	如果棋子没有顺利移动到目标位置，那么这里的px,py就是棋子原始位置的像素坐标
+	'''
 	def _move_chess_img(self, chess, x0, y0, animation_time=.5, animation_frames=25):
 		i, j = chess.x, chess.y
 		img = self.chess_board.img_map[(i,j)]

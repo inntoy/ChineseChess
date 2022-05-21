@@ -31,7 +31,7 @@ def ajax_(request_, response_, route_args_):
 
 def start_server_(port_, max_threads_):
 	from .lib.http_ import Http_
-	http_ = Http_(ip_='0.0.0.0', port_=port_, web_path_='web', max_threads_=max_threads_)
+	http_ = Http_(ip_='127.0.0.1', port_=port_, web_path_='web', max_threads_=max_threads_)
 	http_.add_route_('/ajax', ajax_, 'GET')
 	http_.add_route_('/ajax', ajax_, 'POST')
 	http_.add_route_('/__dir__/{dir}', __dir__, 'GET')
@@ -43,7 +43,8 @@ def start_server_(port_, max_threads_):
 def rpc_auto_move(board_key):
 	from web.py_lib import auto_chess
 	board = auto_chess._board_from_key(board_key)
-	return auto_chess.auto_move(board)
+	from web.py_lib import auto_chess2
+	return auto_chess2.auto_move(board)
 
 # 登记函数 RPC auto_move
 rpc_registry['rpc_auto_move'] = rpc_auto_move
