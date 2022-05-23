@@ -116,7 +116,7 @@ name_change = {
 def auto_move(board):
     global board_explore
     if board_explore is None:
-        board_explore = BoardExplore(board, 3)
+        board_explore = BoardExplore(board, 8)
     else:
         board_explore.reload(board)
     
@@ -141,6 +141,10 @@ class BoardExplore:
 
         self.killermove = {}  # 杀手走法，每一层都有杀手走法(除了根结点)，每次AI下棋时要清除这个列表里的数据
         self.parentlist = set() # 棋盘情况的父节点，用于检查重复情况，只在静态搜索时使用
+        
+        self.checkdepth = 0  # 由于将军延伸导致的深度变化
+        self.depthToRoot = 0    # 当前节点相对于根结点的深度，只有在变换棋盘的时候才会发生改变
+        self.MAX_DEPTH = 20    # 最大搜索深度
     
     # 重新加载棋盘
     def reload(self, board):
@@ -218,6 +222,10 @@ class BoardExplore:
         chess = self.board.board_map.get((this_move[2], this_move[3]))
         # 如果棋子不存在，则报错
         assert chess is not None
+
+        # 距离根结点的深度+1
+        self.depthToRoot = self.depthToRoot+1
+
         # 删掉当前的棋子和将要被移动到的位子上的棋子(如果有)
         del self.board.board_map[(this_move[2], this_move[3])]
         if captureChess is not None:
@@ -244,6 +252,10 @@ class BoardExplore:
         # 此时棋子已经移动到了x，y坐标上了
         chess = self.board.board_map.get((this_move[4], this_move[5]))
         assert chess is not None
+        
+        # 距离根结点的深度-1
+        self.depthToRoot = self.depthToRoot-1
+
         # 删除这个棋子
         del self.board.board_map[(chess.x, chess.y)]
         # 重新添加几个棋子
@@ -358,39 +370,58 @@ class BoardExplore:
         # 对于极大层(红方)玩家，界限是下界，初始值为负无穷或一个比较小的分数，当前节点目标是使取值的下界尽可能大
         # 对于极小层(黑方)玩家，界限是上界，初始值为正无穷或一个比较大的分数，当前节点目标是使取值的上界尽可能小
         player, limit = ('Red', 0-self.win) if maximizingPlayer else ('Black', self.win)
-        bestmove = None
-        
+        bestmove = None     # 当前节点的最好走法，一般是出现截断或者节点的值刚好在规定范围内的情况
+        alpha_move = None   # 没有产生截断，同时节点值不在规定范围内的解法
         now_board = (player,)+auto_chess._board_key(self.board)
-        # 优先判断是否存在重复局面，如果存在则判平
-        if now_board in self.parentlist:
-            print("相同局面，平局")
-            return 0
 
-        # NOTE：这里可能有bug，因为我的走法里只有红方视角下的下法，可能有问题
+        # 1. 如果此时自己的帅已经被吃了，则返回应该有的分数
+        if not self.hasKing(player):
+            self.nodeNum = self.nodeNum + 1
+            return self.evaluate(player, self.depthToRoot)
+        # 1.5 到达0深度后直接使用静态搜索
+        elif(depth == 0):
+            # 如果置换表中有当前棋盘的值，直接返回值
+            if self.replacementlist.get(now_board) is not None:
+                score = self.modifyScore(self.replacementlist[now_board][1], self.depthToRoot)
+                return score
+
+            self.nodeNum = self.nodeNum + 1
+            score = self.Quiesearch(alpha, beta, maximizingPlayer)
+            return score
+        
+        # 2. 检查重复局面    
+        # 优先判断是否存在重复局面，如果存在则判平或判负
+        if now_board in self.parentlist:
+            # 长将直接判负
+            if (self.InCheck(maximizingPlayer)):
+                print("长将， {}方判负".format('红' if maximizingPlayer else '黑'))
+                score = self.win if maximizingPlayer else -self.win
+                if self.show:
+                    self._printBoard()
+                    self.show = False
+                return self.modifyScore(score, self.depthToRoot)
+            else:
+                print("相同局面，平局")
+                return 0
+        
+        # 3. 检查是否到达最大搜索深度，如果达到则直接返回评估结果
+        if self.depthToRoot == self.MAX_DEPTH:
+            return self.evaluate(player, self.depthToRoot)
+
+
+        # 4. 检查置换表中是否有合理的走法
         rep_move = None
         if now_board in self.replacementlist:
             # 先获得置换表下法
             rep_move = self.replacementlist[now_board][2]
             # 置换表里的下法是否大于本节点的深度
             if self.replacementlist[now_board][0] >= depth:
-                score = self.modifyScore(self.replacementlist[now_board][1], depth=self.depth-depth)
-                if depth >= 3:
-                    print("搜索深度为{}，当前深度为{}，置换表中深度为{}，使用的置换表走法为{}".format(self.depth, depth, self.replacementlist[now_board][0], self._correctMove(rep_move, not maximizingPlayer)))
-                if depth == self.depth: self.bestmove = self.replacementlist[now_board][2]
+                score = self.modifyScore(self.replacementlist[now_board][1], self.depthToRoot)
+                # if depth >= 3:
+                #     print("搜索深度为{}，当前深度为{}，置换表中深度为{}，使用的置换表走法为{}，分数为{}".format(self.depth, depth, self.replacementlist[now_board][0], self._correctMove(rep_move, not maximizingPlayer), score))
+                if (depth == self.depth) and maximizingPlayer: self.bestmove = self.replacementlist[now_board][2]
                 return score
-            
-        
-        # 判断结束情况，递归深度为0或当前下棋方已经被将死
-        # 如果搜索深度为0，使用静态搜索
-        # 如果对面的帅已经被吃掉了，则直接返回规定的分数
-        # NOTE：这里我直接把这两步合并了，应该是没有问题的
-        if(depth == 0) or (not self.hasKing(player)):
-            self.nodeNum = self.nodeNum + 1
-
-            score = self.Quiesearch(alpha, beta, maximizingPlayer)
-            score = self.modifyScore(score, self.depth-depth)
-            return score
-            # return self.evaluate(player, self.depth-depth)
+             
 
         # 将当前棋盘加入祖先列表中
         self.parentlist.add(now_board)
@@ -424,7 +455,7 @@ class BoardExplore:
                 if self.board.board_map.get((x, y)) is not None:
                     moves_cap.append(move)
                 # 除此之外，如果是不吃子的着法，查看它是否属于杀手走法
-                elif (self.killermove.get((depth, maximizingPlayer)) is not None) and (move[:-1] in self.killermove[(depth, maximizingPlayer)]):
+                elif (self.killermove.get((self.depthToRoot, maximizingPlayer)) is not None) and (move[:-1] in self.killermove[(self.depthToRoot, maximizingPlayer)]):
                     moves_kill.append(move)
                 else:
                     moves_nocap.append(move)
@@ -460,22 +491,53 @@ class BoardExplore:
                 # 下这一步
                 capture_chess = self.changeBoard(move, maximizingPlayer)
 
-                # pvs搜索中的主要变化，使用了零窗口搜索
+                newDepth = depth - 1
+                isCheck = self.InCheck(maximizingPlayer)
+                # # 2.1. 如果对方的帅已经被吃掉了，我方胜
+                # if (capture_chess is not None) and (capture_chess.type == 'King'):
+                #     score = self.modifyScore(self.win, self.depthToRoot)
+                #     limit = max(limit, score)
+                # # 2.2. 被将军了，因为我方已经走过了，下一步对面一定会吃掉我们的帅，因此直接判负
+                # elif isCheck:
+                #     score = self.modifyScore(-self.win, self.depthToRoot+1)
+                #     limit = max(limit, score)
+                # # 2.3. 此时我方帅很安全，就使用pvs搜索(零窗口搜索范围为(alpha, alpha+1))
+                # else:
+                #     if notFoundPv:
+                #         # 下这一步能得到的分数，是否比本层的下界大，如果大则更新本层下界
+                #         score = self.pvs(alpha, beta, newDepth, False)
+                #         limit = max(limit, score)
+                #     else:
+                #         # 先使用零窗口情况进行搜索
+                #         score = self.pvs(alpha, alpha+1, newDepth, False)
+                #         # 如果是主要变例(即分数在规定范围内)，则在(score, beta)的范围内搜索下面的节点
+                #         if (alpha < score) and (score < beta):
+                #             score = self.pvs(score, beta, newDepth, False)
+                #         # 如果分数不小于上界beta，那说明肯定是要被裁剪的情况，这时不需要再进行搜索了
+                #         limit = max(limit, score)
+
+                # 将军延伸
+                if isCheck:
+                    newDepth = depth
+                    self.checkdepth = self.checkdepth+1
+                # 使用pvs搜索(零窗口搜索范围为(alpha, alpha+1))
                 if notFoundPv:
                     # 下这一步能得到的分数，是否比本层的下界大，如果大则更新本层下界
-                    score = self.pvs(alpha, beta, depth-1, False)
+                    score = self.pvs(alpha, beta, newDepth, False)
                     limit = max(limit, score)
                 else:
                     # 先使用零窗口情况进行搜索
-                    score = self.pvs(alpha, alpha+1, depth-1, False)
+                    score = self.pvs(alpha, alpha+1, newDepth, False)
                     # 如果是主要变例(即分数在规定范围内)，则在(score, beta)的范围内搜索下面的节点
                     if (alpha < score) and (score < beta):
-                        score = self.pvs(score, beta, depth-1, False)
+                        score = self.pvs(score, beta, newDepth, False)
                     # 如果分数不小于上界beta，那说明肯定是要被裁剪的情况，这时不需要再进行搜索了
                     limit = max(limit, score)
+                if isCheck:
+                    self.checkdepth = self.checkdepth-1
                 
-                if (depth >= 4) and (self.depth >= 4):
-                    print("(搜索深度%d，当前深度%d)时,"%(self.depth, depth),self._correctMove(move, False), "下法分数：%d, 上下界(%d,%d)"%(score, alpha, beta))
+                # if (depth >= 2) and (self.depth >= 2):
+                #     print("(搜索深度%d，当前深度%d)时,"%(self.depth, depth),self._correctMove(move, False), "下法分数：%d, 上下界(%d,%d)"%(score, alpha, beta))
 
                 # 查看本次着法能否提高本节点的下界值，如果能则更新下界值alpha
                 # 只保留能产生截断和主要变例的节点值
@@ -491,6 +553,8 @@ class BoardExplore:
                         bestmove = move[:-1]  # move里的最后一个量是分数，不需要保存下来
                         alpha = limit
                         notFoundPv = False
+                if limit == score:
+                    alpha_move = move[:-1]
 
                 # 撤销这一步棋，将棋盘恢复成原来的样子
                 self.recoverBoard(move, maximizingPlayer, capture_chess)
@@ -509,26 +573,57 @@ class BoardExplore:
                     break
             
             else: # 本层为极小层
-                # 下这一步
+                # 1. 下这一步
                 capture_chess = self.changeBoard(move, maximizingPlayer)
 
-                # pvs使用了零窗口搜索(beta-1, beta)
-                # 更新本层的上界
+                newDepth = depth - 1
+                isCheck = self.InCheck(maximizingPlayer)
+                # # 2.1. 如果对方的帅已经被吃掉了，我方胜
+                # if (capture_chess is not None) and (capture_chess.type == 'King'):
+                #     score = self.modifyScore(-self.win, self.depthToRoot)
+                #     limit = min(limit, score)
+                # # 2.2. 被将军了，因为我方已经走过了，下一步对面一定会吃掉我们的帅，因此直接判负
+                # elif isCheck:
+                #     score = self.modifyScore(self.win, self.depthToRoot+1)
+                #     limit = min(limit, score)
+                #     newDepth = depth
+                # # 2.3. 此时我方帅很安全，就使用pvs搜索(零窗口搜索范围为(beta-1, beta))
+                # else:
+                #     # 更新本层的上界
+                #     if notFoundPv:
+                #         score = self.pvs(alpha, beta, newDepth, True)
+                #         limit = min(limit, score)
+                #     else:
+                #         score = self.pvs(beta-1, beta, newDepth, True)
+                #         # 分数在规定范围内，因此为主要变例，此时重新搜索
+                #         if (alpha < score) and (score < beta):
+                #             score = self.pvs(alpha, score, newDepth, True)
+                #         # 分数不大于alpha的一定会被裁剪掉
+                #         limit = min(limit, score)
+
+                # 将军延伸
+                if isCheck:
+                    newDepth = depth
+                    self.checkdepth = self.checkdepth+1
+                # 使用pvs搜索(零窗口搜索范围为(beta-1, beta))
                 if notFoundPv:
-                    score = self.pvs(alpha, beta, depth-1, True)
+                    score = self.pvs(alpha, beta, newDepth, True)
                     limit = min(limit, score)
                 else:
-                    score = self.pvs(beta-1, beta, depth-1, True)
+                    score = self.pvs(beta-1, beta, newDepth, True)
                     # 分数在规定范围内，因此为主要变例，此时重新搜索
                     if (alpha < score) and (score < beta):
-                        score = self.pvs(alpha, score, depth-1, True)
+                        score = self.pvs(alpha, score, newDepth, True)
                     # 分数不大于alpha的一定会被裁剪掉
                     limit = min(limit, score)
+                if isCheck:
+                    self.checkdepth = self.checkdepth-1
+            
 
-                if (depth >= 4) and (self.depth >= 4):
-                    print("(搜索深度%d，当前深度%d)时,"%(self.depth, depth),self._correctMove(move, True), "下法分数：%d, 上下界(%d,%d)"%(score, alpha, beta))
+                # if (depth >= 2) and (self.depth >= 2):
+                #     print("(搜索深度%d，当前深度%d)时,"%(self.depth, depth),self._correctMove(move, True), "下法分数：%d, 上下界(%d,%d)"%(score, alpha, beta))
 
-
+                # 3. 对得分进行分析，获取走法
                 # 如果本层上界比预定上界还要小，则更新
                 if bestmove is None:
                     if score <= beta:
@@ -541,8 +636,10 @@ class BoardExplore:
                         bestmove = move[:-1]  # move里的最后一个量是分数，不需要保存下来
                         beta = limit
                         notFoundPv = False
+                if limit == score:
+                    alpha_move = move[:-1]
 
-                # 撤销这一步棋，将棋盘恢复成原来的样子
+                # 4. 撤销这一步棋，将棋盘恢复成原来的样子
                 self.recoverBoard(move, maximizingPlayer, capture_chess)
                 
                 # 上一层为极大层，给所有输入本层的节点规定了下界alpha
@@ -553,29 +650,43 @@ class BoardExplore:
         #—————————————————————————————————————————————————————————————————————————
 
         #————————————————————————————————对下法进行一些处理—————————————————————————————————
-        # 将最好的下法保存进历史表里(如果最好下法不为空时)
+        # 1. 将最好的下法保存进历史表里(如果最好下法不为空时)
         if bestmove is not None:
             if bestmove not in self.historylist:
                 self.historylist[bestmove] = 0
             self.historylist[bestmove] = self.historylist[bestmove] + (depth * depth)
+        
 
-        # 当此时为根结点时
-        if depth == self.depth:
+        # 2. 当此时为根结点时(当前深度为搜索深度且此时为极大方下棋)
+        if (depth == self.depth) and maximizingPlayer:
             self.bestmove = bestmove
         
-        # 将下法添加到置换表中
-        if bestmove is not None:
-            self.replacementlist[now_board] = [depth, self.modifyScore(limit), bestmove]
+        # 3. 将下法添加到置换表中
+        replaceNode = self.replacementlist.get(now_board)
+        if bestmove is not None: 
+            # 置换表中还没有该节点时，直接最佳走法存入置换表中
+            if replaceNode is None:
+                self.replacementlist[now_board] = [depth, self.modifyScore(limit), bestmove]
+            # 置换表中存在该节点，如果当前走法的深度不小于置换表中走法的深度，就更新
+            elif depth >= replaceNode[0]:
+                self.replacementlist[now_board] = [depth, self.modifyScore(limit), bestmove]
+        # 如果此时是没有发生截断的节点，也保存此走法，但深度设置为0
+        elif(alpha_move is not None):
+            if replaceNode is None:
+                self.replacementlist[now_board] = [0, self.modifyScore(limit), alpha_move]
+            elif (replaceNode[0] == 0):
+                self.replacementlist[now_board] = [0, self.modifyScore(limit), alpha_move]
 
-            # 将该下法放入杀手着法表中，每一层的杀手下法不超过2个
-            item = (depth, maximizingPlayer)
+        # 4. 将该下法放入杀手着法表中，每一层的杀手下法不超过2个
+        if bestmove is not None:
+            item = (self.depthToRoot, maximizingPlayer)
             if item not in self.killermove:
                 self.killermove[item] = []
             self.killermove[item].append(bestmove)
             if len(self.killermove[item]) > 2:
                 del self.killermove[item][0]          
         
-        # 在祖先列表中删除当前棋盘局面
+        # 5. 在祖先列表中删除当前棋盘局面
         self.parentlist.discard(now_board)
 
         # 返回此层的界限值
@@ -619,18 +730,33 @@ class BoardExplore:
     def Quiesearch(self, alpha, beta, maximizingPlayer):
         player, limit = ('Red', -self.win) if maximizingPlayer else ('Black', self.win)
 
+        # 1. 检查重复局面
+        isCheck = None
         now_board = (player,) + auto_chess._board_key(self.board)
         if now_board in self.parentlist:
+            # 长将直接判负
+            isCheck = self.InCheck(maximizingPlayer)
+            if isCheck:
+                score = self.win if maximizingPlayer else -self.win
+                return self.modifyScore(score, self.depthToRoot)
             return 0
         
+        # 2. 检查是否到达最大深度，如果达到则直接返回评估值
+        if self.depthToRoot == self.MAX_DEPTH:
+            return self.evaluate(player, self.depthToRoot)
+        
+
+        # 3. 获得相应的下法
         moves = []
-        isCheck = self.InCheck(maximizingPlayer)
+        if isCheck is None: isCheck = self.InCheck(maximizingPlayer)
         # 如果被将军就搜索所有下法
         if isCheck:
 
+            # print("————————————被将军了，当前棋盘情况为—————————————————")
+            # self._printBoard()
             if(not maximizingPlayer): self.board.rotate_board()
 
-            # 以红方视角下棋
+            # 以红方视角下棋，获得所有的下法
             for _, chess in self.board.board_map.items():
                 if chess.player is 'Black': continue
                 for x, y in auto_chess._chess_moves(chess):
@@ -644,12 +770,12 @@ class BoardExplore:
         else:
             # 如果没被将军就先评估当前棋面分数
             if maximizingPlayer:
-                limit = max(limit, self.evaluate(player, 0))
+                limit = max(limit, self.evaluate(player, self.depthToRoot))
                 alpha = max(limit, alpha)
                 if alpha >= beta:
                     return limit
             else:
-                limit = min(limit, self.evaluate(player, 0))
+                limit = min(limit, self.evaluate(player, self.depthToRoot))
                 beta = min(limit, beta)
                 if beta <= alpha:
                     return limit
@@ -659,7 +785,10 @@ class BoardExplore:
             for _, chess in self.board.board_map.items():
                 if chess.player is 'Black': continue
                 for x, y in auto_chess._chess_moves(chess):
-                    if self.board.board_map.get((x, y)) is not None:
+                    capChess = self.board.board_map.get((x, y))
+                    # 不考虑吃士，象以及不过河的兵的走法
+                    if (capChess is not None) and (capChess.type not in ('Guard', 'Bishop')):
+                        if (capChess.type == 'Pawn') and (capChess.y > 4): continue
                         move = ('Red', chess.type, chess.x, chess.y, x, y, 0)
                         moves.append(move)
             # 这个函数一定要在正确的棋盘下使用，它不会修正坐标
@@ -669,35 +798,53 @@ class BoardExplore:
         # 确定要下棋的时候再把当前局面放入祖父表内
         self.parentlist.add(now_board)
         
+
+        # 4. 对得到的所有走法进行遍历
         for move in moves:
 
             if maximizingPlayer:
                 captureChess = self.changeBoard(move=move, maximizingPlayer=maximizingPlayer)
-                # 被将军时，只下一轮
+                # 被将军时，只下一轮，搜索不被将军时最好下法的分数值，如果无论怎么走都会被将军，则直接返回判负的分数
                 if isCheck:
-                    limit = max(limit, self.evaluate(player, 0))
+                    if not self.InCheck(maximizingPlayer):
+                        score = self.evaluate(player, self.depthToRoot)
+                        # print("**静态搜索中，已被将军** 当前下法为{}, 分数为{}, 本节点下界为({})".format(self._correctMove(move, not maximizingPlayer), score, limit))
+                        limit = max(limit, score)
+                        alpha = max(limit, alpha)
+                    self.recoverBoard(move, maximizingPlayer, captureChess)
                 else:
                     limit = max(limit, self.Quiesearch(alpha, beta, False))
+                    alpha = max(limit, alpha)
+                    self.recoverBoard(move, maximizingPlayer, captureChess)
 
-                alpha = max(limit, alpha)
-                self.recoverBoard(move, maximizingPlayer, captureChess)
                 if alpha >= beta:
                     break
             else:
                 captureChess = self.changeBoard(move=move, maximizingPlayer=maximizingPlayer)
-                # 被将军时，只下一轮
+                # 被将军时
                 if isCheck:
-                    limit = min(limit, self.evaluate(player, 0))
+                    if not self.InCheck(maximizingPlayer):
+                        score = self.evaluate(player, self.depthToRoot)
+                        # print("**静态搜索中，已被将军** 当前下法为{}, 分数为{}, 本节点上界为({})".format(self._correctMove(move, not maximizingPlayer), score, limit))
+                        limit = min(limit, score)
+                        beta = min(limit, beta)
+                    self.recoverBoard(move, maximizingPlayer, captureChess)
                 else:
                     limit = min(limit, self.Quiesearch(alpha, beta, True))
-                
-                beta = min(limit, beta)
-                self.recoverBoard(move, maximizingPlayer, captureChess)
+                    beta = min(limit, beta)
+                    self.recoverBoard(move, maximizingPlayer, captureChess)
                 if beta <= alpha:
                     break
 
         self.parentlist.discard(now_board)
-        return limit    
+
+        # 如果一个吃子的走法都没走过，那么limit就为初始的上限值
+        score = limit
+        if limit in (self.win, -self.win):
+            # 红方没有吃子的走法
+            if maximizingPlayer: score = -(self.win - self.depthToRoot)
+            else: score = self.win -  self.depthToRoot
+        return score
 
     # 迭代加深搜索
     def IterSearch(self):
@@ -709,18 +856,21 @@ class BoardExplore:
         print("\n**********开始搜索***********")
         while True:
             if (time.time()-start_time) > self.limitTime: break
-            # 清空祖先列表
+            # 清空祖先列表，重置探索的节点数量和将军深度
             self.parentlist = set()
             self.nodeNum = 0
+            self.checkdepth = 0
             
-            self.show = False
+            self.show = True
             tmp = self.pvs(0-self.win, self.win, self.depth, True)
             print("搜索深度为{}时的最好下法{}, 分数为{}".format(self.depth, self._correctMove(self.bestmove, False), tmp))
             self.depth = self.depth + 1
             print("探索了%d个进行了局面评估的节点"%self.nodeNum)
+            print(self.checkdepth, self.depthToRoot)
 
         # 结束前清空历史表或给历史表里存在的着法的值都乘上1/4
-        # self.historylist = {}
+        # self.historylist.clear()
+        # self.replacementlist.clear()
         for item in self.historylist:
             self.historylist[item] = self.historylist[item] >> 2
         self._printBoard()
