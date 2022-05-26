@@ -452,4 +452,3 @@ def run_app():
 	chess_board = ChessBoard()
 	javascript.document.body.appendChild(chess_board.elt())
 	Controller(chess_board)
-	

@@ -1,7 +1,30 @@
 
 
 class ChessValue:
-    RedValue = {
+    # 棋子的固定分数(固定子力)
+    ChessBasicValue = {
+        'King': 0,
+        'Guard': 20,
+        'Bishop': 20,
+        'Knight': 45,
+        'Cannon': 50,
+        'Rock': 100,
+        'Pawn': 10
+    }
+
+    # 棋子的移动能力系数
+    ChessMoveValue={
+        'King': 0,
+        'Guard': 1,
+        'Bishop': 1,
+        'Knight': 13,
+        'Cannon': 7,
+        'Rock': 7,
+        'Pawn': 1.5
+    }
+    
+    # 棋子的位置分数
+    RedPositionValue = {
     # 将(帅)
     'King' : [
       [0,  0,  0, 11, 15, 11,  0,  0,  0],  
@@ -96,7 +119,7 @@ class ChessValue:
     }
 
 
-    BlackValue = {
+    BlackPositionValue = {
     # 将(帅)
     'King' : [
       [0,  0,  0,  0,  0,  0,  0,  0,  0],  
