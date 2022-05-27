@@ -832,7 +832,7 @@ class BoardExplore:
                             move = ('Red', chess.type, chess.x, chess.y, x, y, 0)
                             moves.append(move)
             if len(moves) <= 1:
-                moves = moves_notGood
+                moves = moves + moves_notGood
             # 这个函数一定要在正确的棋盘下使用，它不会修正坐标
             self.sortCapMove(moves, maximizingPlayer)
             if(not maximizingPlayer): self.board.rotate_board()
@@ -915,7 +915,7 @@ class BoardExplore:
             
             self.show = True
             tmp = self.pvs(0-self.win, self.win, self.depth, True)
-            print("搜索深度为{}时的最好下法{}, 分数为{}".format(self.depth, self._correctMove(self.bestmove, False), tmp))
+            print("搜索深度为{}时的最好下法{}, 分数为{}，用时{:.3f}秒".format(self.depth, self._correctMove(self.bestmove, False), tmp, (time.time()-start_time)))
             self.depth = self.depth + 1
             print("探索了%d个进行了局面评估的节点"%self.nodeNum)
             print(self.checkdepth, self.depthToRoot)
